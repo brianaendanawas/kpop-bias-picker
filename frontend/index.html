@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>K-Pop Bias Picker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 2rem; max-width: 720px; }
+    h1 { margin-bottom: .25rem; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 1rem; margin: 1rem 0; }
+    button { padding: .6rem 1rem; border-radius: 10px; border: 1px solid #333; cursor: pointer; }
+    .row { display: flex; gap: .75rem; align-items: center; margin: .25rem 0; }
+    .votes { font-weight: bold; }
+    .success { color: #0a7a0a; }
+    .error { color: #a10a0a; }
+  </style>
+</head>
+<body>
+  <h1>Bias Picker <span style="font-size:.7em;opacity:.7">— NCT 127 💚</span></h1>
+  <p id="status"></p>
+
+  <div class="card">
+    <div id="groupTitle" style="font-weight:600;"></div>
+    <div id="members"></div>
+    <div style="margin-top:1rem">
+      <button id="voteBtn">Vote</button>
+      <span id="voteMsg"></span>
+    </div>
+  </div>
+
+  <script>
+    // ======= SET THESE =======
+    const API_BASE = "https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com";
+    const GROUP_ID = "nct127";
+    // =========================
+
+    const statusEl = document.getElementById('status');
+    const titleEl = document.getElementById('groupTitle');
+    const membersEl = document.getElementById('members');
+    const voteBtn = document.getElementById('voteBtn');
+    const voteMsg = document.getElementById('voteMsg');
+
+    let selectedMemberId = null;
+
+    async function loadGroup() {
+      statusEl.textContent = "Loading group...";
+      try {
+        const res = await fetch(`${API_BASE}/groups/${GROUP_ID}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        titleEl.textContent = `${data.groupName} (${data.groupId})`;
+
+        membersEl.innerHTML = "";
+        (data.members || []).forEach(m => {
+          const row = document.createElement('div');
+          row.className = 'row';
+          row.innerHTML = `
+            <input type="radio" name="member" id="m_${m.memberId}" value="${m.memberId}">
+            <label for="m_${m.memberId}">${m.memberName}</label>
+            <span class="votes">(${m.votes})</span>
+          `;
+          row.addEventListener('change', () => { selectedMemberId = m.memberId; });
+          membersEl.appendChild(row);
+        });
+
+        statusEl.textContent = "";
+      } catch (e) {
+        console.error(e);
+        statusEl.innerHTML = `<span class="error">Failed to load group. Check API_BASE/GROUP_ID & CORS.</span>`;
+      }
+    }
+
+    async function vote() {
+      voteMsg.textContent = "";
+      if (!selectedMemberId) {
+        voteMsg.innerHTML = `<span class="error">Please select a member first.</span>`;
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE}/groups/${GROUP_ID}/vote`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ memberId: selectedMemberId })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        voteMsg.innerHTML = `<span class="success">Vote recorded for ${data.memberName}! 🥳</span>`;
+        await loadGroup();
+      } catch (e) {
+        voteMsg.innerHTML = `<span class="error">${e.message}</span>`;
+      }
+    }
+
+    voteBtn.addEventListener('click', vote);
+    loadGroup();
+  </script>
+</body>
+</html>
