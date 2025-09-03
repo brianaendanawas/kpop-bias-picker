@@ -5,61 +5,264 @@
   <title>K-Pop Bias Picker</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <style>
+    :root {
+      --border: #ddd;
+      --ok: #0a7a0a;
+      --err: #a10a0a;
+      --muted: rgba(0,0,0,.6);
+      --chip: rgba(0,0,0,.06);
+    }
     body { font-family: system-ui, Arial, sans-serif; margin: 2rem; max-width: 720px; }
     h1 { margin-bottom: .25rem; }
-    .card { border: 1px solid #ddd; border-radius: 12px; padding: 1rem; margin: 1rem 0; }
+    .card { border: 1px solid var(--border); border-radius: 12px; padding: 1rem; margin: 1rem 0; }
     button { padding: .6rem 1rem; border-radius: 10px; border: 1px solid #333; cursor: pointer; }
-    .row { display: flex; gap: .75rem; align-items: center; margin: .25rem 0; }
-    .votes { font-weight: bold; }
-    .success { color: #0a7a0a; }
-    .error { color: #a10a0a; }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    .row { display: flex; gap: .75rem; align-items: center; margin: .35rem 0; }
+    .votes { font-weight: 600; background: var(--chip); padding: .05rem .4rem; border-radius: 999px; }
+    .success { color: var(--ok); }
+    .error { color: var(--err); }
+    /* Results */
+    #results li { transition: transform .08s ease; }
+    #results li:hover { transform: translateY(-1px); }
+    /* Top 3 highlight */
+    .rank-1 { border: 1px solid gold !important; background: #fffbe6; }
+    .rank-2 { border: 1px solid silver !important; background: #f7f7f7; }
+    .rank-3 { border: 1px solid #cd7f32 !important; background: #fff3ea; }
+    .rank-medal { margin-right: .5rem; }
+    /* Subtle meta line */
+    #results-meta { color: var(--muted); }
+    /* Radio focus */
+    input[type="radio"]:focus-visible + label { outline: 2px solid #333; outline-offset: 2px; border-radius: 6px; }
   </style>
 </head>
 <body>
   <h1>Bias Picker <span style="font-size:.7em;opacity:.7">— NCT 127 💚</span></h1>
   <p id="status"></p>
 
-  <div class="card">
+  <div class="card" aria-labelledby="groupTitle">
     <div id="groupTitle" style="font-weight:600;"></div>
     <div id="members"></div>
-    <div style="margin-top:1rem">
-      <button id="voteBtn">Vote</button>
-      <span id="voteMsg"></span>
+    <div style="margin-top:1rem; display:flex; align-items:center; gap:.75rem;">
+      <button id="voteBtn" aria-live="polite">Vote</button>
+      <span id="voteMsg" role="status" aria-live="polite"></span>
     </div>
   </div>
+  
+  <!-- Results Section -->
+  <section id="results-section" style="margin-top: 2rem;">
+    <h2>Results</h2>
+    <div id="results-meta" style="font-size: 0.95rem; opacity: 0.9; margin-bottom: 0.5rem;">
+      <span id="results-last-updated" aria-live="polite"></span>
+    </div>
+    <ul id="results" style="list-style: none; padding-left: 0;"></ul>
+    <div id="results-total" style="margin-top: 0.75rem; font-weight: 600;"></div>
+  </section>
 
   <script>
     // ======= SET THESE =======
-    const API_BASE = "https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com";
+    const API_BASE = "https://wbgdtiq28c.execute-api.us-east-1.amazonaws.com";
     const GROUP_ID = "nct127";
     // =========================
 
+    const BASE = API_BASE.replace(/\/$/, '');
+
+    // Elements
     const statusEl = document.getElementById('status');
     const titleEl = document.getElementById('groupTitle');
     const membersEl = document.getElementById('members');
     const voteBtn = document.getElementById('voteBtn');
     const voteMsg = document.getElementById('voteMsg');
 
+    // Results elements
+    const resultsListEl = document.getElementById('results');
+    const resultsTotalEl = document.getElementById('results-total');
+    const resultsUpdatedEl = document.getElementById('results-last-updated');
+
+    // Disable Vote until a selection is made
+    voteBtn.disabled = true;
+
     let selectedMemberId = null;
+    let lastMembersSnapshot = []; // used to fallback if /results is empty
+
+    /***********************
+     * Helpers
+     ***********************/
+    function safeText(s) {
+      return (s === null || s === undefined) ? '' : String(s);
+    }
+
+    function normalizeResultsPayload(payload) {
+      let arr = [];
+      let totalVotes;
+
+      if (Array.isArray(payload)) {
+        arr = payload;
+      } else if (payload && typeof payload === 'object') {
+        if (Array.isArray(payload.results)) {
+          arr = payload.results;
+          totalVotes = payload.totalVotes;
+        } else if (Array.isArray(payload.items)) {
+          arr = payload.items;
+          totalVotes = payload.totalVotes;
+        } else if (payload.counts && typeof payload.counts === 'object') {
+          arr = Object.entries(payload.counts).map(([member, votes]) => ({ member, votes }));
+          totalVotes = payload.totalVotes;
+        } else {
+          const keys = Object.keys(payload || {});
+          const looksLikeMap = keys.length > 0 && keys.every(k => typeof payload[k] === 'number');
+          if (looksLikeMap) {
+            arr = keys.map(k => ({ member: k, votes: payload[k] }));
+          }
+        }
+      }
+
+      arr = (arr || []).map(row => ({
+        member: safeText(row.member ?? row.memberName ?? row.name ?? row.id ?? 'Unknown'),
+        votes: Number(row.votes ?? row.count ?? row.voteCount ?? 0)
+      }));
+
+      arr.sort((a, b) => (b.votes - a.votes) || a.member.localeCompare(b.member));
+
+      if (typeof totalVotes !== 'number') {
+        totalVotes = arr.reduce((sum, r) => sum + (Number.isFinite(r.votes) ? r.votes : 0), 0);
+      }
+
+      return { results: arr, totalVotes };
+    }
+
+    function renderResults({ results, totalVotes }) {
+      if (!resultsListEl) return;
+
+      resultsListEl.innerHTML = '';
+
+      if (!results || results.length === 0) {
+        resultsListEl.innerHTML = `<li style="opacity:0.8;">No votes yet.</li>`;
+        if (resultsTotalEl) resultsTotalEl.textContent = '';
+      } else {
+        results.forEach((row, idx) => {
+          const li = document.createElement('li');
+          li.style.padding = '8px 10px';
+          li.style.border = '1px solid rgba(0,0,0,0.08)';
+          li.style.borderRadius = '10px';
+          li.style.marginBottom = '6px';
+          li.style.display = 'flex';
+          li.style.alignItems = 'center';
+          li.style.justifyContent = 'space-between';
+
+          // Top-3 visual rank
+          let medal = '';
+          if (idx === 0) { li.classList.add('rank-1'); medal = '🥇'; }
+          else if (idx === 1) { li.classList.add('rank-2'); medal = '🥈'; }
+          else if (idx === 2) { li.classList.add('rank-3'); medal = '🥉'; }
+
+          const left = document.createElement('div');
+          left.style.display = 'flex';
+          left.style.alignItems = 'center';
+
+          if (medal) {
+            const m = document.createElement('span');
+            m.className = 'rank-medal';
+            m.textContent = medal;
+            left.appendChild(m);
+          }
+
+          const nameSpan = document.createElement('span');
+          nameSpan.textContent = row.member;
+          left.appendChild(nameSpan);
+
+          const votesSpan = document.createElement('span');
+          votesSpan.className = 'votes';
+          votesSpan.textContent = row.votes;
+
+          li.appendChild(left);
+          li.appendChild(votesSpan);
+          resultsListEl.appendChild(li);
+        });
+
+        if (resultsTotalEl) resultsTotalEl.textContent = `Total votes: ${totalVotes}`;
+      }
+
+      if (resultsUpdatedEl) {
+        const now = new Date();
+        resultsUpdatedEl.textContent = `Last updated: ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      }
+    }
+
+    async function fetchResults() {
+      if (!resultsListEl) return;
+
+      const url = `${BASE}/groups/${encodeURIComponent(GROUP_ID)}/results`;
+      try {
+        const res = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
+        if (!res.ok) {
+          console.error('[fetchResults] HTTP', res.status);
+          if (lastMembersSnapshot.length > 0) {
+            renderResults(buildFromSnapshot());
+          } else {
+            renderResults({ results: [], totalVotes: 0 });
+          }
+          return;
+        }
+
+        const payload = await res.json();
+        const normalized = normalizeResultsPayload(payload);
+
+        if ((!normalized.results || normalized.results.length === 0) && lastMembersSnapshot.length > 0) {
+          renderResults(buildFromSnapshot());
+          return;
+        }
+
+        renderResults(normalized);
+      } catch (err) {
+        console.error('[fetchResults] Error', err);
+        if (lastMembersSnapshot.length > 0) {
+          renderResults(buildFromSnapshot());
+        } else {
+          renderResults({ results: [], totalVotes: 0 });
+        }
+      }
+    }
+
+    function buildFromSnapshot() {
+      const arr = lastMembersSnapshot.map(m => ({
+        member: m.member,
+        votes: Number(m.votes ?? 0),
+      }));
+      arr.sort((a, b) => (b.votes - a.votes) || a.member.localeCompare(b.member));
+      const totalVotes = arr.reduce((s, x) => s + (Number.isFinite(x.votes) ? x.votes : 0), 0);
+      return { results: arr, totalVotes };
+    }
 
     async function loadGroup() {
       statusEl.textContent = "Loading group...";
       try {
-        const res = await fetch(`${API_BASE}/groups/${GROUP_ID}`);
+        const res = await fetch(`${BASE}/groups/${GROUP_ID}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         titleEl.textContent = `${data.groupName} (${data.groupId})`;
 
         membersEl.innerHTML = "";
-        (data.members || []).forEach(m => {
+        const members = Array.isArray(data.members) ? data.members : [];
+        if (members.length === 0) {
+          membersEl.innerHTML = `<div style="opacity:.8">No members found for this group.</div>`;
+        }
+
+        lastMembersSnapshot = members.map(m => ({
+          member: safeText(m.memberName ?? m.name ?? m.id ?? 'Unknown'),
+          votes: Number(m.votes ?? 0)
+        }));
+
+        members.forEach(m => {
+          const votesVal = Number(m.votes ?? 0);
           const row = document.createElement('div');
           row.className = 'row';
           row.innerHTML = `
             <input type="radio" name="member" id="m_${m.memberId}" value="${m.memberId}">
             <label for="m_${m.memberId}">${m.memberName}</label>
-            <span class="votes">(${m.votes})</span>
+            <span class="votes">(${votesVal})</span>
           `;
-          row.addEventListener('change', () => { selectedMemberId = m.memberId; });
+          // keyboard: hitting Enter on label toggles the radio, then enables Vote
+          row.addEventListener('change', () => { selectedMemberId = m.memberId; voteBtn.disabled = false; });
           membersEl.appendChild(row);
         });
 
@@ -77,7 +280,12 @@
         return;
       }
       try {
-        const res = await fetch(`${API_BASE}/groups/${GROUP_ID}/vote`, {
+        // Submitting state
+        const prevLabel = voteBtn.textContent;
+        voteBtn.textContent = 'Submitting…';
+        voteBtn.disabled = true;
+
+        const res = await fetch(`${BASE}/groups/${GROUP_ID}/vote`, {
           method: "POST",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({ memberId: selectedMemberId })
@@ -85,14 +293,32 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
         voteMsg.innerHTML = `<span class="success">Vote recorded for ${data.memberName}! 🥳</span>`;
-        await loadGroup();
+
+        await loadGroup();   // refresh radio list & snapshot
+        await fetchResults(); // refresh results
+        document.dispatchEvent(new Event('vote:success'));
       } catch (e) {
         voteMsg.innerHTML = `<span class="error">${e.message}</span>`;
+      } finally {
+        // Reset button and selection
+        voteBtn.textContent = 'Vote';
+        voteBtn.disabled = true;
+        selectedMemberId = null;
+        const checked = document.querySelector('input[name="member"]:checked');
+        if (checked) checked.checked = false;
       }
     }
 
+    // Support Enter key to submit if a radio is selected
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !voteBtn.disabled) {
+        voteBtn.click();
+      }
+    });
+
     voteBtn.addEventListener('click', vote);
     loadGroup();
+    fetchResults();
   </script>
 </body>
 </html>

@@ -143,6 +143,35 @@ def list_groups():
     items.sort(key=lambda x: x.get("groupName", "").lower())
     return _resp(200, {"groups": items})
 
+def get_results(group_id):
+    group_id = _clean_id(group_id)
+    pk = f"GROUP#{group_id}"
+
+    # confirm group exists
+    meta = table.get_item(Key={"pk": pk, "sk": "META"}).get("Item")
+    if not meta:
+        return _resp(404, {"message": "group not found"})
+
+    # fetch members and build results
+    res = table.query(
+        KeyConditionExpression=Key("pk").eq(pk) & Key("sk").begins_with("MEMBER#")
+    )
+    results = {}
+    for item in res.get("Items", []):
+        results[item["memberId"]] = int(item.get("votes", 0))
+
+    # also include nice display names
+    pretty = []
+    for item in res.get("Items", []):
+        pretty.append({
+            "memberId": item["memberId"],
+            "memberName": item.get("memberName", item["memberId"]),
+            "votes": int(item.get("votes", 0))
+        })
+    pretty.sort(key=lambda x: (-x["votes"], x["memberName"].lower()))
+
+    return _resp(200, {"groupId": group_id, "results": results, "members": pretty})
+
 def handler(event, context):
     method = (event.get("requestContext", {}).get("http", {}).get("method") or
               event.get("httpMethod") or "GET").upper()
@@ -150,6 +179,10 @@ def handler(event, context):
     path_params = event.get("pathParameters") or {}
     body = _parse_body(event)
 
+    # define path BEFORE using it anywhere
+    path = raw_path.rstrip("/")
+
+    # Preflight CORS first
     if method == "OPTIONS":
         return {
             "statusCode": 200,
@@ -161,7 +194,13 @@ def handler(event, context):
             "body": ""
         }
 
-    path = raw_path.rstrip("/")
+    # /groups/{groupId}/results
+    if path.endswith("/results") and method == "GET":
+        group_id = path_params.get("groupId")
+        if not group_id:
+            parts = path.split("/")
+            group_id = unquote(parts[2]) if len(parts) >= 4 else ""
+        return get_results(group_id)
 
     if path == "/groups" and method == "POST":
         return create_group(body)
