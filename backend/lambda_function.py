@@ -29,9 +29,12 @@ def _parse_body(event):
         return {}
     body = event["body"]
     if event.get("isBase64Encoded"):
-        body = base64.b64decode(body).decode("utf-8")
+        try:
+            body = base64.b64decode(body).decode("utf-8")
+        except Exception:
+            return {}
     try:
-        return json.loads(body)
+        return json.loads(body or "{}")
     except Exception:
         return {}
 
@@ -41,48 +44,62 @@ def _now_iso():
 def _clean_id(s):
     return "".join(ch for ch in s.lower() if (ch.isalnum() or ch == "-"))
 
+# ---------- data helpers (pk/sk are lowercase) ----------
+def group_pk(group_id): return f"GROUP#{group_id}"
+def member_sk(member_id): return f"MEMBER#{member_id}"
+
+# ---------- routes ----------
 def create_group(payload):
-    group_id = payload.get("groupId", "").strip()
+    group_id = _clean_id(payload.get("groupId", "").strip())
     group_name = payload.get("groupName", "").strip()
     members = payload.get("members", [])
 
     if not group_id or not group_name or not isinstance(members, list) or len(members) == 0:
         return _resp(400, {"message": "groupId, groupName, and non-empty members[] are required"})
 
-    group_id = _clean_id(group_id)
-
-    meta_key = {"pk": f"GROUP#{group_id}", "sk": "META"}
-    existing = table.get_item(Key=meta_key)
-    if "Item" in existing:
+    meta_key = {"pk": group_pk(group_id), "sk": "META"}
+    existing = table.get_item(Key=meta_key).get("Item")
+    if existing:
         return _resp(409, {"message": f"group '{group_id}' already exists"})
 
+    now = _now_iso()
     with table.batch_writer() as batch:
         batch.put_item(Item={
             "pk": meta_key["pk"],
             "sk": meta_key["sk"],
             "groupId": group_id,
             "groupName": group_name,
-            "createdAt": _now_iso()
+            "createdAt": now
         })
         for m in members:
-            member_id = _clean_id(m)
+            member_id = _clean_id(str(m))
             if not member_id:
                 continue
             batch.put_item(Item={
                 "pk": meta_key["pk"],
-                "sk": f"MEMBER#{member_id}",
+                "sk": member_sk(member_id),
                 "groupId": group_id,
                 "memberId": member_id,
-                "memberName": m,
+                "memberName": str(m),
                 "votes": 0,
-                "createdAt": _now_iso()
+                "createdAt": now
             })
 
     return _resp(201, {"message": "group created", "groupId": group_id})
 
+def list_groups():
+    # Scan META rows only (small projects: fine)
+    scan = table.scan(
+        FilterExpression=Attr("sk").eq("META"),
+        ProjectionExpression="groupId, groupName, createdAt"
+    )
+    items = scan.get("Items", [])
+    items.sort(key=lambda x: x.get("groupName", "").lower())
+    return _resp(200, {"groups": items})
+
 def get_group(group_id):
     group_id = _clean_id(group_id)
-    pk = f"GROUP#{group_id}"
+    pk = group_pk(group_id)
 
     meta = table.get_item(Key={"pk": pk, "sk": "META"}).get("Item")
     if not meta:
@@ -91,14 +108,16 @@ def get_group(group_id):
     res = table.query(
         KeyConditionExpression=Key("pk").eq(pk) & Key("sk").begins_with("MEMBER#")
     )
-    members = sorted([
+    members = [
         {
-            "memberId": item["memberId"],
-            "memberName": item["memberName"],
-            "votes": int(item.get("votes", 0))
+            "memberId": it["memberId"],
+            "memberName": it.get("memberName", it["memberId"]),
+            "votes": int(it.get("votes", 0))
         }
-        for item in res.get("Items", [])
-    ], key=lambda x: (-x["votes"], x["memberName"].lower()))
+        for it in res.get("Items", [])
+    ]
+    # sort for stable UI (by name asc) or by votes desc; pick one—keeping by name for group view
+    members.sort(key=lambda x: (x["memberName"] or "").lower())
 
     return _resp(200, {
         "groupId": meta["groupId"],
@@ -113,8 +132,8 @@ def vote_member(group_id, payload):
     if not member_id:
         return _resp(400, {"message": "memberId is required"})
 
-    pk = f"GROUP#{group_id}"
-    sk = f"MEMBER#{member_id}"
+    pk = group_pk(group_id)
+    sk = member_sk(member_id)
 
     try:
         upd = table.update_item(
@@ -128,50 +147,43 @@ def vote_member(group_id, payload):
         return _resp(200, {
             "message": "vote recorded",
             "memberId": item["memberId"],
-            "memberName": item["memberName"],
+            "memberName": item.get("memberName", item["memberId"]),
             "votes": int(item.get("votes", 0))
         })
     except dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
         return _resp(404, {"message": "member or group not found"})
 
-def list_groups():
-    scan = table.scan(
-        FilterExpression=Attr("sk").eq("META"),
-        ProjectionExpression="groupId, groupName, createdAt"
-    )
-    items = scan.get("Items", [])
-    items.sort(key=lambda x: x.get("groupName", "").lower())
-    return _resp(200, {"groups": items})
-
 def get_results(group_id):
+    """
+    Returns both:
+      - results: { memberId: votes, ... }        # compact map
+      - members: [{memberId, memberName, votes}] # pretty, sorted by votes desc then name
+    """
     group_id = _clean_id(group_id)
-    pk = f"GROUP#{group_id}"
+    pk = group_pk(group_id)
 
     # confirm group exists
     meta = table.get_item(Key={"pk": pk, "sk": "META"}).get("Item")
     if not meta:
         return _resp(404, {"message": "group not found"})
 
-    # fetch members and build results
+    # fetch members
     res = table.query(
         KeyConditionExpression=Key("pk").eq(pk) & Key("sk").begins_with("MEMBER#")
     )
-    results = {}
-    for item in res.get("Items", []):
-        results[item["memberId"]] = int(item.get("votes", 0))
+    items = res.get("Items", [])
 
-    # also include nice display names
-    pretty = []
-    for item in res.get("Items", []):
-        pretty.append({
-            "memberId": item["memberId"],
-            "memberName": item.get("memberName", item["memberId"]),
-            "votes": int(item.get("votes", 0))
-        })
+    results = { it["memberId"]: int(it.get("votes", 0)) for it in items }
+    pretty = [{
+        "memberId": it["memberId"],
+        "memberName": it.get("memberName", it["memberId"]),
+        "votes": int(it.get("votes", 0))
+    } for it in items]
+
     pretty.sort(key=lambda x: (-x["votes"], x["memberName"].lower()))
-
     return _resp(200, {"groupId": group_id, "results": results, "members": pretty})
 
+# ---------- router (keeps your 'handler' entrypoint) ----------
 def handler(event, context):
     method = (event.get("requestContext", {}).get("http", {}).get("method") or
               event.get("httpMethod") or "GET").upper()
@@ -179,10 +191,10 @@ def handler(event, context):
     path_params = event.get("pathParameters") or {}
     body = _parse_body(event)
 
-    # define path BEFORE using it anywhere
+    # normalize (no trailing slash)
     path = raw_path.rstrip("/")
 
-    # Preflight CORS first
+    # CORS preflight
     if method == "OPTIONS":
         return {
             "statusCode": 200,
@@ -194,7 +206,7 @@ def handler(event, context):
             "body": ""
         }
 
-    # /groups/{groupId}/results
+    # GET /groups/{groupId}/results
     if path.endswith("/results") and method == "GET":
         group_id = path_params.get("groupId")
         if not group_id:
@@ -202,16 +214,21 @@ def handler(event, context):
             group_id = unquote(parts[2]) if len(parts) >= 4 else ""
         return get_results(group_id)
 
+    # POST /groups
     if path == "/groups" and method == "POST":
         return create_group(body)
 
+    # GET /groups
     if path == "/groups" and method == "GET":
         return list_groups()
 
-    if (path.startswith("/groups/") and method == "GET" and not path.endswith("/vote")):
+    # GET /groups/{groupId}  (anything that isn't /vote or /results)
+    if (path.startswith("/groups/") and method == "GET"
+        and not path.endswith("/vote") and not path.endswith("/results")):
         group_id = path_params.get("groupId") or unquote(path.split("/")[2])
         return get_group(group_id)
 
+    # POST /groups/{groupId}/vote
     if path.endswith("/vote") and method == "POST":
         group_id = path_params.get("groupId")
         if not group_id:
