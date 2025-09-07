@@ -4,11 +4,12 @@
   <meta charset="utf-8"/>
   <title>K-Pop Bias Picker (Simple)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <base href="../">
   <style>
     /* Simple, readable styles */
-    body { font-family: system-ui, Arial, sans-serif; margin: 2rem; max-width: 720px; }
+    body { font-family: system-ui, Arial, sans-serif; margin: 2rem auto; max-width: 1100px; background-color: #fff5f8; }
     h1 { margin-bottom: .25rem; }
-    .card { border: 1px solid #ddd; border-radius: 12px; padding: 1rem; margin: 1rem 0; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 1rem; margin: 1rem 0; background: #fff; }
     .row { display: flex; gap: .75rem; align-items: center; margin: .35rem 0; }
     .votes { font-weight: 600; background: rgba(0,0,0,.06); padding: .05rem .4rem; border-radius: 999px; }
     button { padding: .6rem 1rem; border-radius: 10px; border: 1px solid #333; cursor: pointer; }
@@ -16,28 +17,80 @@
     .success { color: #0a7a0a; }
     .error { color: #a10a0a; }
   </style>
+  <style>
+    button {
+      background-color: #d1ff6e;
+      border: none;
+      color: #000;
+      padding: 12px 20px;
+      margin: 5px;
+      font-size: 16px;
+      cursor: pointer;
+      border-radius: 8px;
+      transition: background-color 0.3s ease;
+    }
+    button:hover {
+      background-color: #b1ff08;
+    }
+    button:active {
+      background-color: #6ea100;
+    }
+    .selected {
+      border: 2px solid #FFD700;
+      background-color: #3e8e41;
+    }
+    .bar {
+      height: 20px;
+      background-color: #4CAF50;
+      text-align: right;
+      padding-right: 5px;
+      color: white;
+      border-radius: 5px;
+    }
+    /* Highlight the selected member row */
+    #members .selectable { border: 1px solid #ccc; border-radius: 8px; padding: .25rem .5rem; background: #fff; }
+    #members .selectable.selected { border-color: #6ea100; background: #b1ff08; color: #000; }
+
+    .layout { display: flex; gap: 1.25rem; align-items: flex-start; }
+    .layout .card, .layout #results-section { flex: 1; }
+    @media (max-width: 900px) { .layout { flex-direction: column; } }
+
+    #results-section h2 { color: #6ea100; }
+
+    .fact-img-wrap { margin-top: 1rem; }
+    .fact-img { width: 100%; height: auto; border-radius: 10px; border: 1px solid #eee; display: block; }
+  </style>
+
 </head>
 <body>
-  <h1>Bias Picker <span style="font-size:.7em;opacity:.7">— NCT 127 💚</span></h1>
+  <h1 style="text-align:center; font-family: Arial, sans-serif; color:#6ea100;">
+    NCT 127 Bias Picker 💚
+  </h1>
   <p id="status"></p>
 
-  <!-- VOTING CARD -->
-  <div class="card" aria-labelledby="groupTitle">
-    <div id="groupTitle" style="font-weight:600;"></div>
-    <div id="members"></div>
+  <div class="layout">
+    <!-- VOTING CARD -->
+    <div class="card" aria-labelledby="groupTitle">
+      <div id="groupTitle" style="font-weight:600;"></div>
+      <div id="members"></div>
 
-    <div style="margin-top:1rem; display:flex; align-items:center; gap:.75rem;">
-      <button id="voteBtn">Vote</button>
-      <span id="voteMsg"></span>
+      <div style="margin-top:1rem; display:flex; align-items:center; gap:.75rem;">
+        <button id="voteBtn">Vote</button>
+        <span id="voteMsg"></span>
+      </div>
+      <div class="fact-img-wrap">
+        <img src="images/nct127-factcheck.jpg" alt="NCT 127 fact check" class="fact-img">
+      </div>
     </div>
+    
+    <!-- RESULTS -->
+    <section id="results-section" style="margin-top: 0rem;">
+      <h2>Results</h2>
+      <div id="results-bars"></div>
+      <!-- <ul id="results" style="list-style: none; padding-left: 0;"></ul> -->
+      <div id="results-total" style="margin-top: 0.5rem; font-weight: 600;"></div>
+    </section>
   </div>
-  
-  <!-- RESULTS -->
-  <section id="results-section" style="margin-top: 2rem;">
-    <h2>Results</h2>
-    <ul id="results" style="list-style: none; padding-left: 0;"></ul>
-    <div id="results-total" style="margin-top: 0.5rem; font-weight: 600;"></div>
-  </section>
 
   <script>
     /******************************************************************
@@ -56,7 +109,6 @@
     const membersEl      = document.getElementById('members');
     const voteBtn        = document.getElementById('voteBtn');
     const voteMsg        = document.getElementById('voteMsg');
-    const resultsListEl  = document.getElementById('results');
     const resultsTotalEl = document.getElementById('results-total');
 
     /******************************************************************
@@ -80,7 +132,7 @@
 
       members.forEach(m => {
         const row = document.createElement('div');
-        row.className = 'row';
+        row.className = 'row selectable'; // add 'selectable' so we can style it
 
         const input = document.createElement('input');
         input.type = 'radio';
@@ -90,6 +142,10 @@
         input.addEventListener('change', () => {
           selectedMemberId = m.memberId;
           voteBtn.disabled = false;
+
+          document.querySelectorAll('#members .selectable.selected')
+            .forEach(el => el.classList.remove('selected'));
+          row.classList.add('selected');
         });
 
         const label = document.createElement('label');
@@ -104,28 +160,6 @@
         row.appendChild(label);
         row.appendChild(votesSpan);
         membersEl.appendChild(row);
-      });
-    }
-
-    /******************************************************************
-     * Render results list                                            *
-     * expects: [{ member: "Name", votes: 3 }, ...]                  *
-     ******************************************************************/
-    function renderResultsList(results) {
-      resultsListEl.innerHTML = '';
-
-      if (!Array.isArray(results) || results.length === 0) {
-        resultsListEl.innerHTML = `<li style="opacity:.8;">No votes yet.</li>`;
-        resultsTotalEl.textContent = '';
-        return;
-      }
-
-      results.forEach(row => {
-        const li = document.createElement('li');
-        li.className = 'row';
-        li.style.justifyContent = 'space-between';
-        li.innerHTML = `<span>${row.member}</span><span class="votes">${row.votes}</span>`;
-        resultsListEl.appendChild(li);
       });
     }
 
@@ -152,7 +186,7 @@
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
 
-        titleEl.textContent = `${data.groupName} (${data.groupId})`;
+        titleEl.textContent = `${data.groupName}`;
 
         const members = Array.isArray(data.members) ? data.members : [];
         lastMembersSnapshot = members.map(m => ({
@@ -224,12 +258,11 @@
           resultsData = buildResultsFromSnapshot();
         }
 
-        renderResultsList(resultsData.results);
         resultsTotalEl.textContent = `Total votes: ${resultsData.totalVotes}`;
+        renderResultsBars(resultsData.results, resultsData.totalVotes);
       } catch (err) {
         console.error(err);
         const fallback = buildResultsFromSnapshot();
-        renderResultsList(fallback.results);
         resultsTotalEl.textContent = `Total votes: ${fallback.totalVotes}`;
       }
     }
@@ -271,7 +304,29 @@
         const checked = document.querySelector('input[name="member"]:checked');
         if (checked) checked.checked = false;
         voteBtn.disabled = true;
+        document.querySelectorAll('#members .selectable.selected')
+        .forEach(el => el.classList.remove('selected'));
       }
+    }
+
+    function renderResultsBars(rows, total) {
+      const el = document.getElementById('results-bars');
+      if (!el) return;
+      const t = Math.max(0, Number(total) || 0);
+
+      el.innerHTML = rows.map(r => {
+        const pct = t ? ((r.votes / t) * 100).toFixed(1) : '0.0';
+        const label = parseFloat(pct) >= 6 ? pct + '%' : '';
+        return `
+          <p>${r.member}: ${r.votes} (${pct}%)</p>
+          <div style="background:#ddd;border-radius:6px;overflow:hidden;margin:4px 0;">
+            <div style="height:20px;width:${pct}%;background:#b1ff08;color:#000;
+                        display:flex;align-items:center;justify-content:flex-end;
+                        padding-right:6px;box-sizing:border-box;">
+              ${label}
+            </div>
+          </div>`;
+      }).join('');
     }
 
     /******************************************************************
