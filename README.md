@@ -32,7 +32,8 @@ HTTP (S3 website, fallback/testing): http://bias-picker-briana-2025.s3-website-u
         "Resource": "arn:aws:s3:::bias-picker-briana-2025/*"
         }
     ]
-} ```
+} 
+```
 3. Upload files
 - index.html at the bucket root
 - Assets in images/ (e.g., images/nct127-factcheck.jpg)
