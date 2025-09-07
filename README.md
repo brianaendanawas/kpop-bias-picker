@@ -20,6 +20,7 @@ HTTP (S3 website, fallback/testing): http://bias-picker-briana-2025.s3-website-u
 - Static website hosting: Enable, Index document: index.html, Error document: index.html (for simple routing fallbacks).
 - Block public access: OFF (disabled) for this bucket.
 2. Bucket policy (public read of site files):
+```json
 {
     "Version": "2012-10-17",
     "Statement": [
@@ -31,7 +32,7 @@ HTTP (S3 website, fallback/testing): http://bias-picker-briana-2025.s3-website-u
         "Resource": "arn:aws:s3:::bias-picker-briana-2025/*"
         }
     ]
-}
+} ```
 3. Upload files
 - index.html at the bucket root
 - Assets in images/ (e.g., images/nct127-factcheck.jpg)
