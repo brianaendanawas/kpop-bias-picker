@@ -78,10 +78,16 @@ ALLOWED_ORIGIN = http://127.0.0.1:5500 while testing, then switch it back.
 ## Flowchart
 ```mermaid
 flowchart LR
-A[Browser\n(CloudFront HTTPS)] -->|GET index.html, images| B[S3 Static Website]
-A -->|POST/GET /groups| C[API Gateway]
-C --> D[Lambda (Python)]
-D --> E[(DynamoDB\nvotes table)]
+  A[Browser (CloudFront HTTPS)]
+  B[S3 Static Website]
+  C[API Gateway]
+  D[Lambda (Python)]
+  E[(DynamoDB votes table)]
+
+  A -->|GET index.html, images| B
+  A -->|POST/GET /groups| C
+  C --> D
+  D --> E
 ```
 
 ## Demo
