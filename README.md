@@ -75,6 +75,13 @@ ALLOWED_ORIGIN = http://127.0.0.1:5500 while testing, then switch it back.
 - CORS error on vote: ALLOWED_ORIGIN must exactly match your site’s origin (including https).
 - Changes not showing: create a CloudFront invalidation for /*.
 
+## Flowchart
+flowchart LR
+A[Browser\n(CloudFront HTTPS)] -->|GET index.html, images| B[S3 Static Website]
+A -->|POST/GET /groups| C[API Gateway]
+C --> D[Lambda (Python)]
+D --> E[(DynamoDB\nvotes table)]
+
 ## Demo
 Here’s the website:
 
