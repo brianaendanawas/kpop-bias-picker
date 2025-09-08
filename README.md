@@ -68,6 +68,7 @@ ALLOWED_ORIGIN = http://127.0.0.1:5500 while testing, then switch it back.
 ## Local Dev Notes
 - Keep assets in images/ and reference with relative paths like images/nct127-factcheck.jpg.
 - If your index.html lives in a subfolder during local dev, ensure paths resolve (e.g., with <base href="../">) or serve from the project root.
+- Fits AWS Free Tier for light traffic; $1 Budget alert configured.
 
 ## Troubleshooting
 - Opening /images/foo.jpg shows the app instead of the image: the key is missing → S3 website serves the error document (index.html). Upload to the exact path (case-sensitive).
