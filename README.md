@@ -76,19 +76,12 @@ ALLOWED_ORIGIN = http://127.0.0.1:5500 while testing, then switch it back.
 - Changes not showing: create a CloudFront invalidation for /*.
 
 ## Flowchart
-```mermaid
-flowchart LR
-  A[Browser<br/>(CloudFront HTTPS)]
-  B[S3 Static Website]
-  C[API Gateway]
-  D[Lambda (Python)]
-  E[(DynamoDB<br/>votes table)]
 
-  A -->|GET index.html, images| B
-  A -->|POST/GET /groups| C
-  C --> D
-  D --> E
+```mermaid
+graph TD
+  A-->B
 ```
+
 
 ## Demo
 Here’s the website:
