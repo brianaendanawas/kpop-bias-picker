@@ -85,8 +85,8 @@ flowchart LR
   D["Lambda (Python)"]
   E["DynamoDB votes table"]
 
-  A --> B
-  A --> C
+  A -- "GET index.html & images" --> B
+  A -- "POST/GET /groups" --> C
   C --> D
   D --> E
 ```
