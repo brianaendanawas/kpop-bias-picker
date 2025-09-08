@@ -81,12 +81,17 @@ ALLOWED_ORIGIN = http://127.0.0.1:5500 while testing, then switch it back.
 
 ```mermaid
 graph LR
+  A[Browser / CloudFront HTTPS]
+  B[S3 static website]
+  C[API Gateway]
+  D[Lambda (Python)]
+  E[DynamoDB (votes table)]
+
   A --> B
-  B --> C
+  A --> C
   C --> D
   D --> E
 ```
-
 
 
 ## Demo
